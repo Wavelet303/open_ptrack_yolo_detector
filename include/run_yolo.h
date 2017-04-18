@@ -17,13 +17,14 @@ typedef struct boxInfo
 {
 	adjBox* boxes;
 	int num;
-	IplImage* im;
+	//IplImage* im;
 } boxInfo;
 
-
+box* init_boxes(network net);
+float** init_probs(network net);
 
 image **load_alphabet_(char* path);
-boxInfo* extractPerson(image im, int num, float thresh, box *boxes, float **probs, char **names, image **alphabet, int classes, bool updateIm);
+void extractPerson(int imW, int imH, int num, float thresh, box *boxes, float **probs, char **names, int classes, boxInfo *result);
 
-boxInfo* run_yolo_detection(image im, network net, float thresh, float hier_thresh, image **alphabet, char **names, bool updateIm);
+void run_yolo_detection(image im, network net, box *boxes, float **probs, float thresh, float hier_thresh, char **names, boxInfo *result);
 

@@ -21,6 +21,28 @@
 #include <time.h>
 
 
+box* init_boxes(network net)
+{
+	layer l = net.layers[net.n-1];
+    box *boxes = (box*)calloc(l.w*l.h*l.n, sizeof(box));
+    
+    return boxes;
+}
+
+float** init_probs(network net)
+{
+	int j;
+	layer l = net.layers[net.n-1];
+    float **probs = (float**)calloc(l.w*l.h*l.n, sizeof(float *));
+    
+    for(j = 0; j < l.w*l.h*l.n; ++j) 
+    {
+    	probs[j] = (float*)calloc(l.classes + 1, sizeof(float *));
+    }
+    
+    return probs;
+}
+
 IplImage* image_to_ipl(image p)
 {
 	image copy = copy_image(p);
@@ -86,13 +108,14 @@ void draw_people_detections(image im, int num,  box *boxes)
 	}
 }
 
-boxInfo* extractPerson(image im, int num, float thresh, box *boxes, float **probs, char **names, image **alphabet, int classes, bool updateIm)
+void extractPerson(int imW, int imH, int num, float thresh, box *boxes, float **probs, char **names, int classes, boxInfo *result)
 {
-	
-	
 	int i;
 	int newNum = 0;
-
+	
+	//clock_t t;
+    //t = clock();
+	
     for(i = 0; i < num; i++)
     {
         int classI = max_index(probs[i], classes);
@@ -102,65 +125,37 @@ boxInfo* extractPerson(image im, int num, float thresh, box *boxes, float **prob
 	        if (strcmp(names[classI], "person") == 0)
 			{
 				newNum++;
-			}
-        }
-    }
-    
-    
- 
-   
-    
-    adjBox* newBoxes = (adjBox*)calloc(newNum, sizeof(adjBox));
-    box* newDrawBoxes = (box*)calloc(newNum, sizeof(box));
-    int j = 0;
-    
-    for(i = 0; i < num; i++)
-    {
-    	int classI = max_index(probs[i], classes);
-        float prob = probs[i][classI];
-        if(prob > thresh)
-        {	
-	        if (strcmp(names[classI], "person") == 0)
-			{
-				//printf( "label = %s\n", names[classI]);
-				int left  = (boxes[i].x-boxes[i].w/2.)*im.w;
-				int right = (boxes[i].x+boxes[i].w/2.)*im.w;
-				int top   = (boxes[i].y-boxes[i].h/2.)*im.h;
-				int bot   = (boxes[i].y+boxes[i].h/2.)*im.h;
+				
+				if(newNum == result->num)
+				{
+					break;
+				}
+				
+				int j = newNum - 1;
+				
+				int left  = (boxes[i].x-boxes[i].w/2.)*imW;
+				int right = (boxes[i].x+boxes[i].w/2.)*imW;
+				int top   = (boxes[i].y-boxes[i].h/2.)*imH;
+				int bot   = (boxes[i].y+boxes[i].h/2.)*imH;
 
 				if(left < 0) left = 0;
-				if(right > im.w-1) right = im.w-1;
+				if(right > imW-1) right = imW-1;
 				if(top < 0) top = 0;
-				if(bot > im.h-1) bot = im.h-1;
+				if(bot > imH-1) bot = imH-1;
 
-				newBoxes[j].x = left;
-				newBoxes[j].y = top;
-				newBoxes[j].w = right-left;
-				newBoxes[j].h = bot-top;
-				
-				newDrawBoxes[j].x = boxes[i].x;
-				newDrawBoxes[j].y = boxes[i].y;
-				newDrawBoxes[j].w = boxes[i].w;
-				newDrawBoxes[j].h = boxes[i].h;
-				
-				j++;
+				result->boxes[j].x = left;
+				result->boxes[j].y = top;
+				result->boxes[j].w = right-left;
+				result->boxes[j].h = bot-top;
 			}
         }
     }
     
+    result->num = newNum;
     
-    
-    if(updateIm)
-    {
-    	draw_people_detections(im, newNum,  newDrawBoxes);
-	}
-    
-    
-    boxInfo* personBoxes = calloc(1, sizeof(boxInfo));
-    personBoxes->boxes = newBoxes;
-    personBoxes->num = newNum;
-    personBoxes->im = image_to_ipl(im);
-    
+    //t = clock() - t;
+    //double time_taken = ((double)t)/CLOCKS_PER_SEC; // in seconds
+    //printf("took %f seconds to extract person \n", time_taken);
     //clock_t t;
     //t = clock();
     
@@ -168,33 +163,30 @@ boxInfo* extractPerson(image im, int num, float thresh, box *boxes, float **prob
     //printf( "H in extract = %d\n", personBoxes->im->h);
     //printf( "Number of People In Extract = %d\n", newNum);
    // printf( "Size of boxinfo = %d\n", sizeof(boxInfo));
-    free_image(im);
+   
     
     
     //t = clock() - t;
     //double time_taken = ((double)t)/CLOCKS_PER_SEC; // in seconds
    // printf("took %f seconds to execute \n", time_taken);
-    
-    return personBoxes;
+    //free_ptrs((void **)probs, num);
 }
 
-boxInfo* run_yolo_detection(image im, network net, float thresh, float hier_thresh, image **alphabet, char **names, bool updateIm)
+void run_yolo_detection(image im, network net, box *boxes, float **probs, float thresh, float hier_thresh, char **names, boxInfo *result)
 {
-	int j;
     float nms=.4;
+    layer l = net.layers[net.n-1];
+    //clock_t t;
+    //t = clock();
     
     image sized = resize_image(im, net.w, net.h);
-    
-    layer l = net.layers[net.n-1];
-    box *boxes = (box*)calloc(l.w*l.h*l.n, sizeof(box));
-    float **probs = (float**)calloc(l.w*l.h*l.n, sizeof(float *));
-    
-    for(j = 0; j < l.w*l.h*l.n; ++j) 
-    {
-    	probs[j] = (float*)calloc(l.classes + 1, sizeof(float *));
-    }
 
+
+	
+    
     float *X = sized.data;
+    
+    
     network_predict(net, X);
     get_region_boxes(l, 1, 1, thresh, probs, boxes, 0, 0, hier_thresh);
 
@@ -206,11 +198,20 @@ boxInfo* run_yolo_detection(image im, network net, float thresh, float hier_thre
     {
     	do_nms_sort(boxes, probs, l.w*l.h*l.n, l.classes, nms);
     }
+    
+    
 
-   // free_image(im);
+	int imW = im.w;
+	int imH = im.h;
+
+    free_image(im);
     free_image(sized);
+    
+    //t = clock() - t;
+    //double time_taken = ((double)t)/CLOCKS_PER_SEC; // in seconds
+    //printf("took %f seconds to predict yolo \n", time_taken);
    // free_ptrs((void **)probs, l.w*l.h*l.n);
   // printf( "detect layer (layer %d) w = %d h = %d n = %d\n", net.n, l.w, l.h, l.n);
-    return extractPerson(im, l.w*l.h*l.n, thresh, boxes, probs, names, alphabet, l.classes, updateIm);
+    extractPerson(imW, imH, l.w*l.h*l.n, thresh, boxes, probs, names,  l.classes, result);
 }
 

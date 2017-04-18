@@ -57,6 +57,8 @@ namespace enc = sensor_msgs::image_encodings;
 network net;
 char **names;
 image **alphabet;
+box *boxes_y;
+float **probs;
 
 float thresh;
 float hier_thresh;
@@ -75,6 +77,9 @@ double _cy;
 
 double _constant_x;
 double _constant_y; 
+
+std::string encoding;
+float mm_factor;
 
 void camera_info_cb (const CameraInfo::ConstPtr & msg)
 {
@@ -165,23 +170,21 @@ void callback(const Image::ConstPtr& rgb_image,
     if((pub.getNumSubscribers() > 0 || detection_pub.getNumSubscribers()) && camera_info_available_flag)
     {
 		//std::cout<<"Run Yolo"<<std::endl;
-		ros::Time begin = ros::Time::now();
+		//ros::Time begin = ros::Time::now();
 		image im = convert_image(cv_ptr_rgb,0,0);
 		
-		boxInfo* boxes;
+		//std::cout << "START CREATE BOX INFO" << std::endl;
+		boxInfo* boxes = (boxInfo*)calloc(1, sizeof(boxInfo));
+		boxes->num = 200;
+		boxes->boxes = (adjBox*)calloc(200, sizeof(adjBox));
 		
-		if(pub.getNumSubscribers() > 0)
-		{
-			boxes = run_yolo_detection(im, net, thresh,  hier_thresh, alphabet, names, true);
-		}
-		else
-		{
-			boxes = run_yolo_detection(im, net, thresh,  hier_thresh, alphabet, names, false);
-		}
+		//std::cout << "ENTER C CODE" << std::endl;
+		run_yolo_detection(im, net, boxes_y, probs, thresh,  hier_thresh, names, boxes);
+		
 		//printf( "Num of people here = %d\n", boxes->num);
-		double duration = ros::Time::now().toSec() - begin.toSec();
+		//double duration = ros::Time::now().toSec() - begin.toSec();
 
-		std::cout << "Time Duration: " << duration<< std::endl;
+		//std::cout << "Time Duration: " << duration<< std::endl;
 		
     	
     	//Get Depth Image
@@ -189,7 +192,7 @@ void callback(const Image::ConstPtr& rgb_image,
 		cv_bridge::CvImage::Ptr cv_ptr_depth;
 		try
 		{
-		    cv_ptr_depth = cv_bridge::toCvCopy(depth_image); //, sensor_msgs::image_encodings::TYPE_32FC1);
+		    cv_ptr_depth = cv_bridge::toCvCopy(depth_image, encoding); //, sensor_msgs::image_encodings::TYPE_32FC1);
 		}
 		catch (cv_bridge::Exception& e)
 		{
@@ -210,7 +213,7 @@ void callback(const Image::ConstPtr& rgb_image,
 			}
 		}
 		
-		cv::Mat image = cv::cvarrToMat(boxes->im);
+		cv::Mat image = cv_ptr_rgb->image;
 		
 		detection_array_msg->confidence_type = std::string("yolo");
 		detection_array_msg->image_type = std::string("rgb");
@@ -226,20 +229,22 @@ void callback(const Image::ConstPtr& rgb_image,
 			int newWidth = 2 * (median_factor * (medianX - boxes->boxes[i].x));
 			int newHeight = 2 * (median_factor * (medianY - boxes->boxes[i].y));
 			
-			if(pub.getNumSubscribers() > 0)
-			{
-				cv::rectangle(image, cv::Point( newX, newY ), cv::Point( newX+ newWidth, newY+ newHeight), cv::Scalar( 0, 255, 0 ));
-			}
-			
 			
 			cv::Rect rect(newX, newY, newWidth, newHeight);
-			float medianDepth = median(_depth_image(rect)) ;
+			float medianDepth = median(_depth_image(rect)) / mm_factor;
 			//float medianDepth = _depth_image.at<float>(medianY, medianX) / 1000.0f;
 			
 			std::stringstream ss;
-			ss << medianDepth;
+			ss << medianDepth << " " << mm_factor;
 			
-			cv::putText(image, ss.str(), cv::Point(30,30), cv::FONT_HERSHEY_COMPLEX_SMALL, 0.8, cv::Scalar(200,200,250), 1, CV_AA);
+			
+			if(pub.getNumSubscribers() > 0)
+			{
+				cv::rectangle(image, cv::Point( newX, newY ), cv::Point( newX+ newWidth, newY+ newHeight), cv::Scalar( 0, 255, 0 ), 4);
+				cv::rectangle(image, cv::Point( boxes->boxes[i].x, boxes->boxes[i].y ), 
+									 cv::Point( boxes->boxes[i].x+ boxes->boxes[i].w, boxes->boxes[i].y+ boxes->boxes[i].h), cv::Scalar( 255, 0, 255 ), 10);
+				//cv::putText(image, ss.str(), cv::Point(30,30), cv::FONT_HERSHEY_COMPLEX_SMALL, 0.8, cv::Scalar(200,200,250), 1, CV_AA);
+			}
 			
 			float mx =  (medianX - _cx) * medianDepth * _constant_x;
 			float my = (medianY - _cy) * medianDepth * _constant_y;
@@ -306,6 +311,34 @@ int main(int argc, char** argv)
 	std::string camera_info_topic;
 	nh.param("camera_info_topic", camera_info_topic, std::string("/camera/rgb/camera_info"));
 	
+	std::string encoding_param;
+	nh.param("encoding_type", encoding_param, std::string("16UC1"));
+	
+	int in_mm;
+	nh.param("in_mm", in_mm, 0);
+	
+	if(encoding_param.compare(std::string("16UC1")) == 0)
+	{
+		encoding = sensor_msgs::image_encodings::TYPE_16UC1;
+	}
+	else if(encoding_param.compare(std::string("32FC1")) == 0)
+	{
+		encoding = sensor_msgs::image_encodings::TYPE_32FC1;
+	}
+	else
+	{
+		encoding = sensor_msgs::image_encodings::TYPE_16UC1;
+	}
+	
+	if(in_mm)
+	{
+		mm_factor = 1000.0f;
+	}
+	else
+	{
+		mm_factor = 1.0f;
+	}
+	
 	double thresh_;
 	double hier_thresh_;
 	median_factor = 0.1;
@@ -339,6 +372,8 @@ int main(int argc, char** argv)
     set_batch_network( &net, 1 );
 	srand(2222222);
 	
+	boxes_y = init_boxes(net);
+	probs = init_probs(net);
 	
 	list *options = read_data_cfg((char*)datacfg.c_str() );
     char *name_list = option_find_str(options, "names", "data/names.list");
